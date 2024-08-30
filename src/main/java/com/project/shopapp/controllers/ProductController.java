@@ -1,6 +1,7 @@
 package com.project.shopapp.controllers;
 
 import com.github.javafaker.Faker;
+import com.project.shopapp.components.LocalizationUtils;
 import com.project.shopapp.dtos.ProductDTO;
 import com.project.shopapp.dtos.ProductImageDTO;
 import com.project.shopapp.exceptions.DataNotFoundException;
@@ -9,8 +10,10 @@ import com.project.shopapp.models.Productimage;
 import com.project.shopapp.responses.ProductListResponse;
 import com.project.shopapp.responses.ProductResponse;
 import com.project.shopapp.services.ProductService;
+import com.project.shopapp.utils.MessageKeys;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.UrlResource;
 import org.springframework.data.domain.*;
 import org.springframework.http.*;
 import org.springframework.util.StringUtils;
@@ -27,6 +30,7 @@ import java.util.*;
 @RequiredArgsConstructor
 public class ProductController {
   private final ProductService productService;
+  private final LocalizationUtils localizationUtils;
 
   @GetMapping("")
   public ResponseEntity<ProductListResponse> getAllProducts(
@@ -34,7 +38,8 @@ public class ProductController {
       @RequestParam("limit") int limit
   ) {
     PageRequest pageRequest = PageRequest.of(page, limit,
-        Sort.by("createdAt").descending());
+//        Sort.by("createdAt").descending());
+          Sort.by("id").ascending());
     Page<ProductResponse> products = productService.getAllProducts(pageRequest);
     int totalPages = products.getTotalPages();
     List<ProductResponse> productList = products.getContent();
@@ -77,63 +82,91 @@ public class ProductController {
   }
 
   //Request upload image
-  @PostMapping(value = "uploads/{id}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-  public ResponseEntity<?> uploadImage(@PathVariable("id") Long productId, @ModelAttribute("files") List<MultipartFile> files
-  ) {
+  @PostMapping(value = "uploads/{id}",
+      consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  //POST http://localhost:8088/v1/api/products
+  public ResponseEntity<?> uploadImages(
+      @PathVariable("id") Long productId,
+      @ModelAttribute("files") List<MultipartFile> files
+  ){
     try {
       Product existingProduct = productService.getProductById(productId);
       files = files == null ? new ArrayList<MultipartFile>() : files;
-      if (files.size() > Productimage.MAXIMUM_IMAGES_PER_PRODUCT) {
-        return ResponseEntity.badRequest().body("You can only upload more than 5 images");
+      if(files.size() > Productimage.MAXIMUM_IMAGES_PER_PRODUCT) {
+        return ResponseEntity.badRequest().body(localizationUtils
+            .getLocalizedMessage(MessageKeys.UPLOAD_IMAGES_MAX_5));
       }
-      List<Productimage> productimages = new ArrayList<>();
+      List<Productimage> productImages = new ArrayList<>();
       for (MultipartFile file : files) {
-        if (file.getSize() == 0) {
+        if(file.getSize() == 0) {
           continue;
         }
-        if (file.getSize() > 10 * 1024 * 1024) {
+        // Kiểm tra kích thước file và định dạng
+        if(file.getSize() > 10 * 1024 * 1024) { // Kích thước > 10MB
           return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
-              .body("File is too large! Maximum size is 10MB");
+              .body(localizationUtils
+                  .getLocalizedMessage(MessageKeys.UPLOAD_IMAGES_FILE_LARGE));
         }
         String contentType = file.getContentType();
-        if (contentType == null || !contentType.startsWith("image/")) {
+        if(contentType == null || !contentType.startsWith("image/")) {
           return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
-              .body("Unsupported content type: " + contentType);
+              .body(localizationUtils.getLocalizedMessage(MessageKeys.UPLOAD_IMAGES_FILE_MUST_BE_IMAGE));
         }
-        String filename = storeFile(file);
-        //Luu vao doi tuong trong Product
-        Productimage productimage = productService.createProductImage(existingProduct
-                .getId(),
+        // Lưu file và cập nhật thumbnail trong DTO
+        String filename = storeFile(file); // Thay thế hàm này với code của bạn để lưu file
+        //lưu vào đối tượng product trong DB
+        Productimage productImage = productService.createProductImage(
+            existingProduct.getId(),
             ProductImageDTO.builder()
                 .imageUrl(filename)
                 .build()
         );
-        productimages.add(productimage);
+        productImages.add(productImage);
       }
-      return ResponseEntity.ok().body(productimages);
+      return ResponseEntity.ok().body(productImages);
     } catch (Exception e) {
       return ResponseEntity.badRequest().body(e.getMessage());
     }
   }
+  @GetMapping("/images/{imageName}")
+  public ResponseEntity<?> viewImage(@PathVariable String imageName) {
+    try {
+      java.nio.file.Path imagePath = Paths.get("uploads/"+imageName);
+      UrlResource resource = new UrlResource(imagePath.toUri());
 
-
+      if (resource.exists()) {
+        return ResponseEntity.ok()
+            .contentType(MediaType.IMAGE_JPEG)
+            .body(resource);
+      } else {
+        return ResponseEntity.notFound().build();
+      }
+    } catch (Exception e) {
+      return ResponseEntity.notFound().build();
+    }
+  }
   private String storeFile(MultipartFile file) throws IOException {
-    if (file.getOriginalFilename() == null) {
-      throw new IOException("Filename cannot be empty");
+    if (!isImageFile(file) || file.getOriginalFilename() == null) {
+      throw new IOException("Invalid image format");
     }
-    String filename = StringUtils.cleanPath(file.getOriginalFilename());
-    //add UUID
-    String uniqueFileName = UUID.randomUUID().toString() + "." + filename;
-    Path uploadDir = Paths.get("uploads");
-    //Check ton tai cua thu muc
+    String filename = StringUtils.cleanPath(Objects.requireNonNull(file.getOriginalFilename()));
+    // Thêm UUID vào trước tên file để đảm bảo tên file là duy nhất
+    String uniqueFilename = UUID.randomUUID().toString() + "_" + filename;
+    // Đường dẫn đến thư mục mà bạn muốn lưu file
+    java.nio.file.Path uploadDir = Paths.get("uploads");
+    // Kiểm tra và tạo thư mục nếu nó không tồn tại
     if (!Files.exists(uploadDir)) {
-      Files.createDirectory(uploadDir);
+      Files.createDirectories(uploadDir);
     }
-    //Get full path file
-    Path destination = Paths.get(uploadDir.toString(), uniqueFileName);
-    //copy file to dir
+    // Đường dẫn đầy đủ đến file
+    java.nio.file.Path destination = Paths.get(uploadDir.toString(), uniqueFilename);
+    // Sao chép file vào thư mục đích
     Files.copy(file.getInputStream(), destination, StandardCopyOption.REPLACE_EXISTING);
-    return uniqueFileName;
+    return uniqueFilename;
+  }
+  private boolean isImageFile(MultipartFile file) {
+    String contentType = file.getContentType();
+    return contentType != null && contentType.startsWith("image/");
   }
 
   @PutMapping("/{id}")

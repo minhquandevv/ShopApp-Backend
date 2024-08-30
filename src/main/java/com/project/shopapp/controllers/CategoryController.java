@@ -2,7 +2,11 @@ package com.project.shopapp.controllers;
 
 import com.project.shopapp.dtos.CategoryDTO;
 import com.project.shopapp.models.Category;
+import com.project.shopapp.responses.CategoryResponse;
+import com.project.shopapp.responses.UpdateCategoryResponse;
 import com.project.shopapp.services.CategoryService;
+import com.project.shopapp.components.LocalizationUtils;
+import com.project.shopapp.utils.MessageKeys;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -17,23 +21,28 @@ import java.util.List;
 @RequiredArgsConstructor
 public class CategoryController {
   private final CategoryService categoryService;
+  private final LocalizationUtils localizationUtils;
 
   @PostMapping("")
-  public ResponseEntity<?> createCategory(
+  public ResponseEntity<CategoryResponse> createCategory(
       @Valid
       @RequestBody
       CategoryDTO categoryDTO,
       BindingResult result
   ) {
+    CategoryResponse categoryResponse = new CategoryResponse();
     if (result.hasErrors()) {
       List<String> errorMessage = result.getFieldErrors()
           .stream()
           .map(FieldError::getDefaultMessage)
           .toList();
-      return ResponseEntity.badRequest().body(errorMessage);
+      categoryResponse.setMessage(localizationUtils.getLocalizedMessage(MessageKeys.INSERT_CATEGORY_FAILED));
+      categoryResponse.setErrors(errorMessage);
+      return ResponseEntity.badRequest().body(categoryResponse);
     }
-    categoryService.createCategory(categoryDTO);
-    return ResponseEntity.ok("Add category successful");
+    Category category = categoryService.createCategory(categoryDTO);
+    categoryResponse.setCategory(category);
+    return ResponseEntity.ok(categoryResponse);
   }
 
   @GetMapping("")
@@ -46,14 +55,17 @@ public class CategoryController {
   }
 
   @PutMapping("/{id}")
-  public ResponseEntity<String> updateCategory(@PathVariable Long id, @Valid @RequestBody CategoryDTO categoryDTO) {
+  public ResponseEntity<UpdateCategoryResponse> updateCategory(@PathVariable Long id, @Valid @RequestBody CategoryDTO categoryDTO) {
     categoryService.updateCategory(id, categoryDTO);
-    return ResponseEntity.ok("Update category successful");
+    return ResponseEntity.ok(UpdateCategoryResponse
+        .builder()
+        .message(localizationUtils.getLocalizedMessage(MessageKeys.UPDATE_CATEGORY_SUCCESSFULLY))
+        .build());
   }
 
   @DeleteMapping("/{id}")
   public ResponseEntity<String> deleteCategory(@PathVariable Long id) {
     categoryService.deleteCategory(id);
-    return ResponseEntity.ok("Delete category successful with id: " + id);
+    return ResponseEntity.ok(localizationUtils.getLocalizedMessage(MessageKeys.DELETE_CATEGORY_SUCCESSFULLY));
   }
 }
